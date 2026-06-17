@@ -1,19 +1,26 @@
-# Python environment
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+
+# Virtual environments
 venv/
+.env
+
+# VS Code
+.vscode/
+
+# Logs
+logs/
 
 # Credentials and tokens
 credentials.json
 token.json
 
-# Logs
-logs/
-
-# Bytecode
-__pycache__/
-*.py[cod]
-
-# VS Code
-.vscode/
+# Distribution
+dist/
+build/
 
 # OS files
 .DS_Store

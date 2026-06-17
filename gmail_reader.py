@@ -1,7 +1,8 @@
 import datetime
 
-import os.path
+import os
 import base64
+from google.auth.exceptions import RefreshError
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -29,7 +30,23 @@ def authenticate_gmail():
     if not creds or not creds.valid:
 
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                # Refresh token invalid (revoked/expired). Remove stored token
+                # and fall back to full OAuth flow to obtain new credentials.
+                try:
+                    if os.path.exists('token.json'):
+                        os.remove('token.json')
+                except Exception:
+                    pass
+
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    'credentials.json',
+                    SCOPES
+                )
+
+                creds = flow.run_local_server(port=0)
 
         else:
             flow = InstalledAppFlow.from_client_secrets_file(

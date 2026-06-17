@@ -1,182 +1,122 @@
 # Gmail Threat Analyzer
 
-Gmail Threat Analyzer is a Python-based email security tool designed to scan your Gmail inbox for phishing, spoofing, malicious links, and other suspicious content.
+Gmail Threat Analyzer is a Python email security tool for scanning Gmail messages and identifying phishing, spoofing, and suspicious URL behavior.
 
-> For full developer documentation and architecture details, see `DOCUMENTATION.md`.
+## What this project does
 
-## Overview
+- Reads Gmail messages via the Gmail API
+- Extracts sender, subject, and email body text
+- Detects phishing patterns, spoofing, and social engineering
+- Analyzes URLs and marks suspicious domains
+- Checks URLs against VirusTotal for malicious reputation
+- Computes a risk score for each email
+- Logs results to `logs/siem_logs.json`
 
-This project connects to Gmail using the Gmail API, reads messages, and applies multiple detection techniques to identify threats. It generates a consolidated risk score per email and highlights indicators such as impersonation, URL manipulation, and social engineering.
+## Files in this repository
 
-## Key Features
+- `gmail_reader.py` - main script that authenticates with Gmail, reads messages, and runs analysis
+- `phishing_detector.py` - detection rules and phishing heuristics
+- `url_checker.py` - URL extraction and suspicious domain detection
+- `virustotal_checker.py` - VirusTotal URL reputation lookup
+- `risk_score.py` - risk scoring engine for email threat levels
+- `siem_logger.py` - logging and duplicate-scan prevention
+- `actions.py` - helper functions for email actions
+- `credentials.json` - Gmail OAuth credentials (not included in repo)
+- `token.json` - OAuth token generated after first run
+- `logs/siem_logs.json` - scan result log file
 
-- Gmail API integration for inbox scanning
-- Rule-based phishing detection
-- URL and domain reputation analysis
-- VirusTotal URL reputation checks
-- Risk scoring from safe to phishing
-- Duplicate email skip using SIEM log history
-- Previous result summary shown for already-checked emails
-- Modular architecture for detection and scoring
-- Command-line execution with live output
+## Requirements
 
-## What It Detects
+- Python 3.10+
+- Gmail API credentials
 
-- Social engineering and urgency tactics
-- Email spoofing and sender impersonation
-- Malicious or shortened URLs
-- Suspicious domains and typosquatting
-- Credential harvesting attempts
-- Strange attachments or hidden malicious content
+## Recommended dependencies
 
-## How It Works
+Install the required libraries:
 
-1. `gmail_reader.py` connects to Gmail using OAuth and reads recent messages from the inbox.
-2. The raw email data is passed through `phishing_detector.py` to identify suspicious patterns and behaviors.
-3. `url_checker.py` examines links and domains found in email bodies to flag phishing URLs and lookalike domains.
-4. `virustotal_checker.py` checks suspicious URLs against VirusTotal for known malicious detections.
-5. `risk_score.py` consolidates detected threats into a single score, making it easy to classify email risk.
-6. `siem_logger.py` logs email results and prevents duplicate checks by skipping already-processed messages while showing the previous result.
-7. `actions.py` supports any follow-up operations, such as logging, quarantining, or generating alerts.
+```powershell
+python -m pip install --upgrade pip
+python -m pip install \
+  google-api-python-client \
+  google-auth-httplib2 \
+  google-auth-oauthlib \
+  beautifulsoup4 \
+  colorama \
+  validators \
+  tldextract \
+  requests
+```
 
-## Detection Strategy
+## Setup
 
-- Sender analysis: checks for mismatched sender addresses and display names.
-- Content inspection: looks for phishing keywords, urgency signals, and suspicious HTML or attachment indicators.
-- URL validation: detects shortened links, known bad domains, and hidden redirect patterns.
-- Reputation checks: leverages heuristic rules to identify typosquatting and URL obfuscation.
+1. Create a Python virtual environment:
 
-## Extension Guide
-
-- Add new phishing rules in `phishing_detector.py` for custom email patterns.
-- Update scoring details in `risk_score.py` to change how threats contribute to the final risk value.
-- Expand URL heuristics in `url_checker.py` to cover new attack techniques.
-- Use `actions.py` to integrate quarantine, notification, or reporting workflows.
-
-## Installation
-
-1. Install Python 3.10+.
-2. Create a virtual environment (recommended):
-
-```bash
+```powershell
 python -m venv venv
-venv\Scripts\Activate.ps1   # PowerShell
-venv\Scripts\activate.bat   # Command Prompt
+venv\Scripts\Activate.ps1
 ```
 
-3. Install required packages:
+2. Install the dependencies above.
 
-```bash
-pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib beautifulsoup4 colorama validators tldextract scikit-learn dkimpy pyspf
-```
+3. Enable the Gmail API in Google Cloud Console.
+4. Create OAuth 2.0 credentials and download `credentials.json` to this folder.
 
-If you want, create a `requirements.txt` file with the same packages for reuse:
+## Running the tool
 
-```text
-google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
-beautifulsoup4
-colorama
-validators
-tldextract
-scikit-learn
-dkimpy
-pyspf
-```
-
-4. Configure Gmail API access:
-   - Create a project in the Google Cloud Console
-   - Enable the Gmail API
-   - Create OAuth 2.0 credentials
-   - Download `credentials.json` into the project folder
-
-## Usage
-
-Run the main analyzer:
-
-```bash
+```powershell
 python gmail_reader.py
 ```
 
-The first time you run the tool, it will open a browser window or provide a local URL for Gmail OAuth authentication. After successful sign-in, `token.json` is created automatically.
+On first run, Gmail will ask for OAuth permission and create `token.json`.
 
-The tool will:
+## Install dependencies from requirements
 
-1. Authenticate via the Gmail API
-2. Read emails from the connected account
-3. Analyze message headers, body, and URLs
-4. Check suspicious URLs against VirusTotal
-5. Assign a risk score to each message
-6. Log results to `logs/siem_logs.json`
-7. Skip duplicate checks for already-processed emails while showing prior results
-8. Exit cleanly when stopped with Ctrl+C
+After creating and activating the virtual environment, install packages with:
 
-## Example Output
-
-```text
-[2026-05-13 14:32:15] LIVE EMAIL SCAN
---------------------------------------------------
-FROM     : suspicious@sender.com
-SUBJECT  : Urgent Account Verification
-
-RISK     : 85 / 100
-STATUS   : PHISHING
-
-THREAT BREAKDOWN:
-  - Detected Threats: 4
-  - Suspicious URLs: 1
-  - Malicious URLs (VirusTotal): 1
-
-THREAT DETAILS:
-  ✗ Sender address mismatch
-  ✗ High urgency / credential request
-  ✗ Suspicious URL detected
-  ✗ Domain typo / lookalike detected
-
-SUSPICIOUS URLs:
-  ⚠ http://bit.ly/...
---------------------------------------------------
+```powershell
+pip install -r requirements.txt
 ```
 
-If an email was already processed, the tool now displays the prior result and then skips reprocessing it.
+```
+## How the scan works
 
-## Supported Gmail Scopes
+1. Authenticate with Gmail.
+2. List inbox messages.
+3. Extract message headers and body text.
+4. Extract URLs from email content.
+5. Run phishing detection rules.
+6. Check suspicious URLs with VirusTotal.
+7. Compute a risk score and display the result.
+8. Log findings to `logs/siem_logs.json`.
 
-- `https://www.googleapis.com/auth/gmail.readonly`
-- `https://www.googleapis.com/auth/gmail.modify`
+## Risk output
 
-If your current OAuth consent only allows read access, the analyzer can still scan messages but may not perform mailbox modifications.
+The tool assigns a score from 0 to 100 and classifies emails as:
 
-## Project Files
+- `PHISHING`
+- `SUSPICIOUS`
+- `LOW RISK`
+- `SAFE`
 
-- `gmail_reader.py` - Main Gmail integration and scanning workflow
-- `phishing_detector.py` - Detection rules for phishing and suspicious content
-- `risk_score.py` - Risk scoring engine and threat aggregation
-- `url_checker.py` - URL and domain safety analysis
-- `actions.py` - Email action handling and response utilities
-- `credentials.json` - Gmail API credentials file (not included in repo)
-- `token.json` - Stored OAuth token after initial authentication
-- `Requirement` - Dependency installation guide
+## Important notes
 
-## Configuration
+- Do not commit `credentials.json`, `token.json`, or `logs/` to Git.
+- Protect your Gmail credentials and OAuth token.
+- This tool is intended for authorized testing only.
 
-- `credentials.json`: OAuth client credentials from Google Cloud.
-- `token.json`: Created automatically after first OAuth sign-in.
+## Recommended `.gitignore`
 
-> Keep `credentials.json` and `token.json` secure. Do not commit them to version control.
+```gitignore
+venv/
+.vscode/
+__pycache__/
+credentials.json
+token.json
+logs/
+```
 
 ## Troubleshooting
 
-- If Gmail authentication fails, verify that the Gmail API is enabled and the OAuth credentials are correct.
-- If dependencies are missing, reinstall with `pip install -r requirements.txt` after creating one or install packages manually.
-- If the script cannot access email, ensure the account allows Gmail API access and the token is valid.
-
-## Notes
-
-- This project is intended for educational and research purposes.
-- Always verify suspicious emails manually before acting on them.
-
-## License
-
-Use this project responsibly and only on accounts or systems for which you have permission.
+- If Gmail authentication fails, verify your OAuth credentials and Gmail API settings.
+- If a dependency is missing, reinstall with `pip install -r requirements.txt` after creating the file.
+- If the scanner can’t read messages, ensure the Gmail account is accessible and the token is valid.
