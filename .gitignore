@@ -1,0 +1,20 @@
+# Python environment
+venv/
+
+# Credentials and tokens
+credentials.json
+token.json
+
+# Logs
+logs/
+
+# Bytecode
+__pycache__/
+*.py[cod]
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
