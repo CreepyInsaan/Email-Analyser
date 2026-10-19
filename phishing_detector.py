@@ -1,4 +1,6 @@
 import re
+from email.utils import parseaddr
+
 import tldextract
 
 # Comprehensive phishing detection patterns
@@ -6,7 +8,10 @@ PHISHING_PATTERNS = {
     "Social Engineering": [
         r"verify.*account", r"urgent.*action", r"immediate.*response",
         r"account.*suspended", r"security.*alert", r"password.*reset",
-        r"login.*required", r"confirm.*identity", r"update.*information"
+        r"login.*required", r"confirm.*identity", r"update.*information",
+        r"\bpretend to be\b", r"\bdo not tell anyone\b",
+        r"\bkeep this (?:request|transaction) confidential\b",
+        r"\bact now or lose\b"
     ],
     "Domain Spoofing": [
         r"@.*-.*\..*",   # Hyphens in suspicious places
@@ -106,6 +111,86 @@ PHISHING_PATTERNS = {
     ],
     "Exploit Delivery": [
         r"exploit", r"vulnerability", r"zero.*day", r"patch.*required"
+    ],
+    "Phishing": [
+        r"\bverify (?:your )?(?:account|identity|email)\b",
+        r"\bconfirm (?:your )?(?:account|identity|details)\b",
+        r"\b(?:sign in|log in) to (?:avoid|prevent|restore|continue)\b"
+    ],
+    "Spam": [
+        r"\bbulk email\b", r"\bmass mailing\b",
+        r"\bclaim your (?:prize|reward|gift)\b",
+        r"\bwork from home.{0,30}(?:earn|income|money)\b",
+        r"\byou(?:'ve| have) won.{0,30}(?:prize|cash|gift)\b"
+    ],
+    "Malicious Links": [
+        r"https?://(?:\d{1,3}\.){3}\d{1,3}(?=[:/])",
+        r"https?://[^\s/]+/[^?\s]*(?:login|verify|password|credential)[^?\s]*",
+        r"https?://[^\s?]+\?(?:url|redirect|return_url|continue)="
+    ],
+    "Business Email Compromise": [
+        r"\b(?:wire|transfer|send|pay) (?:the )?(?:funds|money|payment)\b",
+        r"\b(?:urgent|confidential) (?:payment|wire|transfer)\b",
+        r"\b(?:gift cards?|bank details|direct deposit)\b"
+    ],
+    "Spear Phishing": [
+        r"\b(?:exclusively|specifically) for you\b",
+        r"\bprivate and confidential\b",
+        r"\b(?:your project|our conversation|the meeting) yesterday\b"
+    ],
+    "Ransomware": [
+        r"\bfiles? (?:have been|are) encrypted\b",
+        r"\bdecrypt(?:ion)? key\b", r"\bransom(?:ware)? payment\b",
+        r"\bpay (?:the )?ransom\b"
+    ],
+    "Credential Theft": [
+        r"\b(?:send|share|reply with) (?:your )?(?:password|passcode|one[- ]time code)\b",
+        r"\b(?:email|account) password\b.{0,30}\b(?:reply|send|provide)\b",
+        r"\b(?:authentication|security) token\b.{0,30}\b(?:share|send|provide)\b"
+    ],
+    "Email Account Takeover": [
+        r"\b(?:unrecognized|unknown|new) sign[- ]in\b",
+        r"\bmailbox (?:has been )?(?:compromised|accessed)\b",
+        r"\b(?:email|mailbox) account takeover\b",
+        r"\bpassword changed without your permission\b"
+    ],
+    "Invoice and Payment Fraud": [
+        r"\b(?:fake|overdue|attached) invoice\b",
+        r"\bchange (?:our )?(?:bank|payment|wire) details\b",
+        r"\bnew bank account for (?:the )?payment\b",
+        r"\bpayment (?:is )?past due\b"
+    ],
+    "Password-reset Scams": [
+        r"\b(?:unexpected|unsolicited) password reset\b",
+        r"\breset your password (?:now|immediately|within)\b",
+        r"\bpassword reset request.{0,30}(?:not you|did not|wasn't you)\b"
+    ],
+    "Email Bombing": [
+        r"\b(?:email|mailbox|inbox) (?:bombing|flood|flooded)\b",
+        r"\binbox (?:was )?flooded with (?:emails|messages)\b",
+        r"\bdenial[- ]of[- ]service (?:email|mailbox)\b"
+    ],
+    "OAuth Consent Phishing": [
+        r"\bgrant (?:this|the) app access\b",
+        r"\b(?:review|accept) (?:this )?app permissions\b",
+        r"\b(?:oauth|application) consent (?:required|request)\b",
+        r"\ballow this application to access your (?:mail|email|account)\b"
+    ],
+    "Spyware and Keyloggers": [
+        r"\bkeylogger\b", r"\bkeystrokes? (?:recorded|captured|logged)\b",
+        r"\bspyware\b", r"\bmonitoring software\b"
+    ],
+    "Data Leakage": [
+        r"\b(?:confidential|sensitive|personal) data attached\b",
+        r"\b(?:social security|ssn|credit card|bank account) number\b",
+        r"\bapi[_ -]?key\s*[:=]\s*[a-z0-9_-]{8,}\b",
+        r"\bpassword\s*[:=]\s*\S{6,}\b"
+    ],
+    "Mailbox-rule Abuse": [
+        r"\b(?:mailbox|inbox) forwarding rule\b",
+        r"\bforward (?:all|every) (?:your )?(?:email|message)s? to\b",
+        r"\b(?:inbox|mailbox) rule (?:created|changed|added)\b",
+        r"\bhide (?:these|the) (?:email|message)s? from\b"
     ]
 }
 
@@ -136,15 +221,17 @@ def is_suspicious_sender_domain(sender_lower):
     return None
 
 
-def detect_phishing(text, sender="", subject="", urls=None):
+def detect_phishing(text, sender="", subject="", urls=None, attachments=None):
     """
     Comprehensive phishing detection function.
     Returns a dictionary with detected threats categorized by type.
     """
     if urls is None:
         urls = []
+    if attachments is None:
+        attachments = []
         
-    text_lower = text.lower()
+    text_lower = f"{subject} {text}".lower()
     sender_lower = sender.lower()
     subject_lower = subject.lower()
     
@@ -160,8 +247,51 @@ def detect_phishing(text, sender="", subject="", urls=None):
         
         if found_in_category:
             detected_threats[category] = found_in_category
+
+    # Attachment names are available in Gmail metadata even when file contents
+    # are not downloaded. Flag risky extensions, but do not claim file scanning.
+    risky_extensions = (
+        ".exe", ".scr", ".pif", ".bat", ".cmd", ".com", ".vbs", ".vbe",
+        ".js", ".jse", ".jar", ".hta", ".wsf", ".ps1", ".iso", ".img",
+        ".lnk", ".reg", ".chm", ".one", ".docm", ".xlsm", ".pptm", ".html"
+    )
+    suspicious_attachment_extensions = (
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".zip", ".rar", ".7z"
+    )
+    for filename in attachments:
+        filename_lower = filename.lower()
+        if filename_lower.endswith(risky_extensions):
+            detected_threats.setdefault("Malware Attachments", []).append(filename)
+            if re.search(r"\.(?:pdf|docx?|xlsx?|jpe?g|png)\.(?:exe|scr|js|vbs|bat)$", filename_lower):
+                detected_threats.setdefault("Double Extensions", []).append(filename)
+        elif filename_lower.endswith(suspicious_attachment_extensions):
+            detected_threats.setdefault("Malicious Attachments", []).append(filename)
+
+    # Look for high-risk URLs in the URL field as well as the message text.
+    for url in urls:
+        url_lower = url.lower()
+        url_suffix = tldextract.extract(url).suffix
+        if (
+            any(re.search(pattern, url_lower, re.IGNORECASE)
+                for pattern in PHISHING_PATTERNS["Malicious Links"])
+            or f".{url_suffix}" in SUSPICIOUS_TLDS
+        ):
+            detected_threats.setdefault("Malicious Links", []).append(url)
     
     # Additional domain-specific checks
+    display_name, sender_address = parseaddr(sender)
+    sender_domain = sender_address.rsplit("@", 1)[-1].lower()
+    extracted_sender_domain = tldextract.extract(sender_domain).domain
+    trusted_brands = ["google", "microsoft", "apple", "amazon", "facebook", "linkedin", "paypal"]
+    if any(
+        brand in display_name.lower() and extracted_sender_domain != brand
+        for brand in trusted_brands
+    ):
+        detected_threats.setdefault("Email Spoofing", []).append(
+            f"Trusted brand display name does not match sender domain: {sender_domain}"
+        )
+
     suspicious_domain_reason = is_suspicious_sender_domain(sender_lower)
     if suspicious_domain_reason:
         if "Domain Spoofing" not in detected_threats:
@@ -170,7 +300,7 @@ def detect_phishing(text, sender="", subject="", urls=None):
     
     # Check for typosquatting in domain
     extracted = tldextract.extract(sender_lower)
-    common_domains = ["google", "microsoft", "apple", "amazon", "facebook", "linkedin", "paypal"]
+    common_domains = trusted_brands
     for real_domain in common_domains:
         if real_domain in extracted.domain and extracted.domain != real_domain:
             if "Typosquatting" not in detected_threats:
@@ -263,5 +393,41 @@ def get_threat_summary(detected_threats):
             summary.append("Deepfake elements")
         elif category == "Exploit Delivery":
             summary.append("Exploit delivery")
+        elif category == "Phishing":
+            summary.append("Phishing indicators detected")
+        elif category == "Spam":
+            summary.append("Spam or bulk-mail indicators detected")
+        elif category in ("Malware Attachments", "Malicious Attachments"):
+            summary.append("Potentially risky attachment type detected; file contents not scanned")
+        elif category == "Email Spoofing":
+            summary.append("Sender display name does not match its apparent domain")
+        elif category == "Malicious Links":
+            summary.append("Potentially malicious link indicators")
+        elif category == "VirusTotal Malicious URL":
+            summary.append("VirusTotal reports malicious URL reputation")
+        elif category == "Business Email Compromise":
+            summary.append("Business email compromise indicators")
+        elif category == "Spear Phishing":
+            summary.append("Targeted phishing indicators")
+        elif category == "Ransomware":
+            summary.append("Ransomware indicators detected")
+        elif category == "Credential Theft":
+            summary.append("Credential theft indicators")
+        elif category == "Email Account Takeover":
+            summary.append("Email account takeover indicators")
+        elif category == "Invoice and Payment Fraud":
+            summary.append("Invoice or payment fraud indicators")
+        elif category == "Password-reset Scams":
+            summary.append("Password-reset scam indicators")
+        elif category == "Email Bombing":
+            summary.append("Email bombing or mailbox flooding indicators")
+        elif category == "OAuth Consent Phishing":
+            summary.append("OAuth consent phishing indicators")
+        elif category == "Spyware and Keyloggers":
+            summary.append("Spyware or keylogger indicators")
+        elif category == "Data Leakage":
+            summary.append("Potential sensitive data disclosure")
+        elif category == "Mailbox-rule Abuse":
+            summary.append("Mailbox rule abuse indicators")
     
     return summary

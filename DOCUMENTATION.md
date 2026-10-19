@@ -1,215 +1,121 @@
 # Gmail Threat Analyzer Documentation
 
-## Project Overview
+Gmail Threat Analyzer is a Python command-line application that retrieves Gmail messages, checks them for heuristic phishing and other threat indicators, calculates a risk score, and records results in a local JSON Lines file.
 
-Gmail Threat Analyzer is a Python-based email security tool that scans Gmail messages for phishing, spoofing, malicious links, and other suspicious indicators. It uses Gmail API access to read inbox messages, applies heuristic rules to detect threats, computes a risk score, logs results to a SIEM file, and avoids re-checking previously analyzed emails.
+## Project structure
 
-## Architecture
+- `gmail_reader.py` — OAuth authentication, Gmail message retrieval, analysis workflow, and console output.
+- `phishing_detector.py` — pattern-based message, sender, URL, and attachment-filename indicators.
+- `url_checker.py` — HTTP(S) URL extraction and suspicious-host/URL-structure analysis.
+- `virustotal_checker.py` — VirusTotal URL reputation lookups.
+- `risk_score.py` — threat-category weighting and risk score calculation.
+- `siem_logger.py` — append-only scan logging and duplicate-scan lookup.
+- `actions.py` — helper for adding the Gmail `SPAM` label; it is not invoked automatically by the scanner.
+- `requirements.txt` — Python dependencies.
+- `README.md` — quick-start instructions.
+- `logs/siem_logs.json` — generated scan log.
+- `credentials.json` and `token.json` — local OAuth credentials and token; keep private and do not commit.
 
-The project is organized into modular components:
+## Requirements and installation
 
-- `gmail_reader.py`: Main workflow. Authenticates with Gmail, fetches messages, extracts email text, runs detection, computes risk, and outputs results.
-- `phishing_detector.py`: Detection engine for phishing tactics, suspicious content, spoofing patterns, and URL-based threats.
-- `url_checker.py`: URL extraction and suspicious domain analysis.
-- `virustotal_checker.py`: VirusTotal URL reputation checks.
-- `risk_score.py`: Converts detected threats and suspicious URLs into a normalized risk score.
-- `siem_logger.py`: Writes event logs to `logs/siem_logs.json` and loads previous results to prevent duplicate analysis.
-- `actions.py`: Placeholder for follow-up actions such as quarantining or moving email messages.
+- Python 3.10 or newer
+- A Google account and Gmail API access
+- A Google Cloud OAuth 2.0 Desktop app client
+- A VirusTotal API key for URL reputation lookups
 
-## Files Description
+From the project directory, create and activate a virtual environment, then install dependencies:
 
-- `README.md`: Project overview and quick start.
-- `DOCUMENTATION.md`: In-depth documentation for developers and users.
-- `gmail_reader.py`: Entry point for running the live email scan.
-- `phishing_detector.py`: Threat detection and summary generation.
-- `url_checker.py`: URL extraction and bad-TLD detection.
-- `virustotal_checker.py`: Third-party VirusTotal checks.
-- `risk_score.py`: Risk calculation logic.
-- `siem_logger.py`: SIEM-style logging and duplicate skip support.
-- `actions.py`: Email action helpers.
-- `credentials.json`: OAuth client credentials (sensitive; not committed).
-- `token.json`: Cached Gmail OAuth token.
-- `logs/siem_logs.json`: Append-only log file storing scan results.
-
-## Installation
-
-1. Install Python 3.10 or newer.
-2. Create and activate a virtual environment:
-
-```bash
+```powershell
 python -m venv venv
-venv\Scripts\Activate.ps1   # PowerShell
-venv\Scripts\activate.bat   # Command Prompt
+.\venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-3. Install project dependencies:
+For Command Prompt, activate the environment with `venv\Scripts\activate.bat`.
 
-```bash
-pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib beautifulsoup4 colorama validators tldextract requests
+In Google Cloud Console, enable the Gmail API, create an OAuth 2.0 Desktop app client, and save its downloaded credentials as `credentials.json` in the project directory.
+
+Set the VirusTotal API key in the environment. In PowerShell, this sets it for the current session:
+
+```powershell
+$env:VIRUSTOTAL_API_KEY = "your-api-key"
 ```
 
-4. Create a `requirements.txt` file if desired:
+Do not store the key in source code or commit it. The scanner attempts a VirusTotal lookup for every extracted URL. If the key is missing or a lookup fails, the error is reported and logged; this is not treated as a clean result.
 
-```text
-google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
-beautifulsoup4
-colorama
-validators
-tldextract
-requests
-```
+## Running the scanner
 
-## Configuration
-
-1. Enable the Gmail API in Google Cloud Console.
-2. Create OAuth 2.0 client credentials.
-3. Download the credentials file as `credentials.json` and place it in the project root.
-4. Run the tool once to generate `token.json`.
-
-### Important security notes
-
-- Keep `credentials.json` and `token.json` private.
-- Do not commit these files to version control.
-- `virustotal_checker.py` currently includes a hardcoded `API_KEY`; replace this with a secure configuration method such as environment variables.
-
-## Running the Analyzer
-
-Execute the main script:
-
-```bash
+```powershell
 python gmail_reader.py
 ```
 
-The first run will prompt for Gmail OAuth authentication using the browser. Once authenticated, the token is stored in `token.json`.
+On first run, a browser window opens for Gmail authorization. The resulting token is stored in `token.json` and reused on later runs. The application requests the `https://www.googleapis.com/auth/gmail.modify` scope; review this access carefully before consenting.
 
-### What happens during a run
+The scanner retrieves messages through Gmail's messages list API (up to 100 per page, following subsequent pages when present). It does not specify an inbox-only query.
 
-1. Authenticate with Gmail.
-2. List messages in the inbox.
-3. Retrieve each message and extract headers and body text.
-4. Extract URLs from the email text.
-5. Analyze URLs for suspicious TLDs.
-6. Check URLs with VirusTotal.
-7. Detect phishing threats using heuristic patterns.
-8. Compute a risk score.
-9. Log results to `logs/siem_logs.json`.
-10. Display the analysis summary.
+## Scan workflow
 
-## Detection Flow
+For each message not identified as previously scanned, the application:
 
-### Email extraction
+1. Reads the sender and subject headers.
+2. Extracts plain-text or HTML body text from the message payload, and collects attachment filenames from MIME-part metadata.
+3. Extracts unique HTTP(S) URLs from the sender, subject, and extracted body text.
+4. Analyzes URLs for suspicious top-level domains, IP-address hosts, embedded URL credentials, and punycode hostnames.
+5. Requests VirusTotal reputation for each extracted URL.
+6. Applies phishing-pattern, sender-domain, URL, and attachment-filename checks.
+7. Calculates a risk score, prints the findings, and appends an event to `logs/siem_logs.json`.
 
-- The message body is extracted from Gmail payload parts.
-- Plain text is preferred; HTML is stripped of tags if needed.
+The tool does not download attachment files or inspect their contents. It does not automatically quarantine, delete, or otherwise modify messages. `actions.py` defines a separate helper for adding the `SPAM` label, but the scan workflow does not call it.
 
-### Threat detection
+## Detection behavior
 
-`phishing_detector.py` identifies suspicious content using multiple pattern categories such as:
+The detector uses regular-expression patterns and heuristics. Categories include phishing and spam wording, urgency and social engineering, sender-domain spoofing and typosquatting, impersonation, suspicious or obfuscated links, credential theft, OAuth consent abuse, business email compromise, invoice/payment fraud, ransomware and malware wording, and other patterns defined in `PHISHING_PATTERNS` in `phishing_detector.py`.
 
-- Social engineering
-- Domain spoofing
-- Typosquatting
-- URL obfuscation
-- URL shortening
-- Attachment weaponization
-- Macro exploitation
-- HTML smuggling
-- Credential harvesting
-- Impersonation and urgency tactics
-- Fake branding
-- Homograph attacks
-- OAuth abuse
-- Session cookie theft
-- Malware payload delivery
-- Command-and-control and evasion techniques
+Attachment analysis is filename-only. Certain executable, script, and other risky extensions are flagged as `Malware Attachments`; common document and archive extensions are flagged as `Malicious Attachments`. These are indicators based on filenames, not a verdict about file contents.
 
-It also looks for suspicious sender domains and common brand spoofing.
+URL analysis and phishing-pattern analysis are separate checks. A suspicious URL can contribute to the score even when no matching message-text pattern is found. VirusTotal results are also considered: URLs with one or more malicious engine detections are included as a threat category.
 
-### URL analysis
+## Risk score
 
-`url_checker.py` extracts URLs and flags those containing risky top-level domains such as `.xyz`, `.ru`, `.tk`, `.top`, `.cn`, and others.
+`risk_score.py` adds the configured weight for each detected threat category, adds 8 points per suspicious URL, and adds a small increment for multiple categories and selected high-risk combinations. The result is capped at 100.
 
-### VirusTotal checks
+| Score | Classification |
+| --- | --- |
+| 70–100 | `PHISHING` |
+| 40–69 | `SUSPICIOUS` |
+| 20–39 | `LOW RISK` |
+| 0–19 | `SAFE` |
 
-`virustotal_checker.py` queries VirusTotal for URL reputation and adds malicious counts to the analysis summary.
+These classifications are heuristic and should not be interpreted as proof that a message is malicious or safe.
 
-### Risk scoring
+## VirusTotal and privacy
 
-`risk_score.py` assigns weights to detected threat categories and adds points for suspicious URLs. Scores are normalized to a maximum of `100`.
+When configured, the application sends each extracted URL to VirusTotal's URL analysis endpoint. Consider VirusTotal's data-handling terms and organizational policy before scanning messages that may contain sensitive or confidential URLs. VirusTotal API errors, including a missing key, are recorded as lookup errors and do not establish that a URL is safe. API rate limits or network failures may make lookups unavailable.
 
-- `70+`: PHISHING
-- `40-69`: SUSPICIOUS
-- `20-39`: LOW RISK
-- `<20`: SAFE
+The scan log can contain sender addresses, subjects, threat details, URLs, attachment filenames, message IDs, and lookup errors. Treat it as sensitive data. The repository's `.gitignore` excludes `credentials.json`, `token.json`, and `logs/`; continue to keep these files private.
 
-## Logging and SIEM Support
+## Logging and duplicate handling
 
-`siem_logger.py` writes one JSON entry per analyzed email to `logs/siem_logs.json`.
+`siem_logger.py` appends one JSON object per line to `logs/siem_logs.json`. An event includes the timestamp, sender, subject, risk score, threat summary, status, threat categories, suspicious URLs, malicious URLs, URLs not found in VirusTotal, attachment filenames, and VirusTotal lookup errors. The Gmail message ID is included when available.
 
-Each log entry includes:
+At startup, the scanner loads prior events and skips a message when either its Gmail message ID or its `sender|subject` signature has already been logged. The signature fallback can also cause distinct messages with the same sender and subject to be skipped. To intentionally analyze messages again, remove or archive the relevant log entries before a scan.
 
-- timestamp
-- sender
-- subject
-- risk_score
-- threat details
-- message_id (when available)
+## Detection scope and limitations
 
-The tool uses these logs to skip repeated analysis for the same message and to display prior results.
+- Pattern-based checks can produce false positives and may miss new or context-dependent attacks.
+- Attachment contents are not downloaded or scanned; a risky extension is not proof of malware.
+- HTML is converted to text with basic tag removal and link extraction, not a full security-focused HTML parser.
+- Some patterns (such as spear-phishing, email bombing, OAuth consent, and mailbox-rule abuse) indicate suspicious wording only. The application does not analyze mailbox-wide volume, account settings, or actual mailbox rules.
+- VirusTotal availability depends on the API key, network connectivity, and service limits.
+- A `SAFE` classification means the configured checks did not produce a high score; it is not a guarantee of safety.
 
-## Duplicate Email Handling
+Use the tool only with mailboxes you own or are authorized to analyze, and review findings before taking action.
 
-The scanner compares each email's Gmail message ID and a `sender|subject` signature against existing log entries. If a match exists, it prints the previous scan result and skips reprocessing the message.
+## Extending the project
 
-## Extending the Project
-
-### Add new detection rules
-
-- Edit `PHISHING_PATTERNS` in `phishing_detector.py`.
-- Add new categories and regex patterns.
-- Update `get_threat_summary()` to provide readable descriptions.
-
-### Improve URL detection
-
-- Modify `bad_tlds` in `url_checker.py`.
-- Add additional URL heuristics or domain reputation checks.
-
-### Enhance scoring
-
-- Adjust `threat_weights` in `risk_score.py`.
-- Add custom risk factors for attachments, sender reputation, or past history.
-
-### Add actions
-
-- Extend `actions.py` with new functions such as quarantining, notifying administrators, or saving evidence reports.
-- Call those actions from `gmail_reader.py` after threats are detected.
-
-## Security Recommendations
-
-- Move the VirusTotal API key out of `virustotal_checker.py` and into a secure environment variable.
-- Validate and sanitize any user-provided input.
-- Limit Gmail API scope to just what is needed.
-- Review OAuth consent and access permissions carefully.
-
-## Known Limitations
-
-- The tool relies on pattern-based rules and may generate false positives.
-- HTML parsing is basic and may miss deeply nested content.
-- VirusTotal checks use a single API key and do not currently handle rate limits.
-- It does not currently quarantine or block messages automatically.
-- No formal unit tests are included yet.
-
-## Future Enhancements
-
-- Add OAuth and Gmail API scope configuration.
-- Implement better HTML email parsing with `BeautifulSoup`.
-- Add attachment inspection and metadata analysis.
-- Support multi-account scanning or service account integration.
-- Provide a web dashboard or report export.
-- Replace the hardcoded VirusTotal key with secure configuration.
-
-## Contact and Use
-
-Use this tool for authorized security testing and email analysis only. Always get consent before scanning someone else’s mailbox.
+- Add or tune detection patterns in `PHISHING_PATTERNS` in `phishing_detector.py`.
+- Update `get_threat_summary()` in the same module when adding a category that needs a readable console summary.
+- Adjust category weights and risk factors in `risk_score.py`.
+- Adjust URL extraction or suspicious-host indicators in `url_checker.py`.
+- Extend logging fields in `siem_logger.py` and its call site in `gmail_reader.py` together so persisted events remain consistent.
+- If adding message actions, call them explicitly from the scan workflow and make their effects clear to the operator.

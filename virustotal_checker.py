@@ -1,33 +1,47 @@
-import requests
 import base64
+import os
 
-API_KEY = "768ce7e28ec4b3a18ecc3b714c80e5ff1f169079901700885252d2e45a73a0df"
+import requests
+
+
+class VirusTotalError(RuntimeError):
+    """Raised when VirusTotal cannot provide a URL reputation result."""
+
 
 def check_url(url):
+    """Return VirusTotal's malicious-engine count, or None if the URL is unknown."""
+    api_key = os.getenv("VIRUSTOTAL_API_KEY")
+    if not api_key:
+        raise VirusTotalError(
+            "VIRUSTOTAL_API_KEY is not set; VirusTotal URL checks are unavailable"
+        )
 
-    encoded_url = base64.urlsafe_b64encode(
-        url.encode()
-    ).decode().strip("=")
+    encoded_url = base64.urlsafe_b64encode(url.encode("utf-8")).decode().rstrip("=")
+    endpoint = f"https://www.virustotal.com/api/v3/urls/{encoded_url}"
+    headers = {"x-apikey": api_key}
 
-    headers = {
-        "x-apikey": API_KEY
-    }
+    try:
+        response = requests.get(endpoint, headers=headers, timeout=15)
+    except requests.RequestException as exc:
+        raise VirusTotalError("VirusTotal request failed") from exc
 
-    vt_url = f"https://www.virustotal.com/api/v3/urls/{encoded_url}"
+    if response.status_code == 404:
+        return None
 
-    response = requests.get(
-        vt_url,
-        headers=headers
-    )
+    try:
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise VirusTotalError(
+            f"VirusTotal returned HTTP {response.status_code}"
+        ) from exc
 
-    if response.status_code == 200:
+    try:
+        stats = response.json()["data"]["attributes"]["last_analysis_stats"]
+        malicious_count = stats["malicious"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise VirusTotalError("VirusTotal returned an invalid URL analysis response") from exc
 
-        data = response.json()
+    if not isinstance(malicious_count, int) or malicious_count < 0:
+        raise VirusTotalError("VirusTotal returned an invalid malicious-engine count")
 
-        malicious = data["data"]["attributes"][
-            "last_analysis_stats"
-        ]["malicious"]
-
-        return malicious
-
-    return 0
+    return malicious_count

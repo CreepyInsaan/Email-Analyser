@@ -1,7 +1,8 @@
 import datetime
-
+import html
 import os
 import base64
+import re
 from google.auth.exceptions import RefreshError
 
 from google.auth.transport.requests import Request
@@ -11,7 +12,7 @@ from googleapiclient.discovery import build
 from phishing_detector import detect_phishing, get_threat_summary
 from risk_score import calculate_risk
 from url_checker import extract_urls, analyze_urls
-from virustotal_checker import check_url
+from virustotal_checker import VirusTotalError, check_url
 from siem_logger import log_event, load_logged_events
 
 
@@ -68,6 +69,15 @@ def get_message_body(payload):
     """Extract the plain text body from Gmail message payload."""
     body = ""
 
+    def html_to_text(html_content):
+        links = re.findall(
+            r'''href\s*=\s*["'](https?://[^"']+)["']''',
+            html_content,
+            re.IGNORECASE
+        )
+        text = re.sub(r'<[^>]+>', '', html_content)
+        return text + " " + " ".join(html.unescape(link) for link in links)
+
     def extract_from_parts(parts):
         """Recursively extract text from message parts."""
         text_content = ""
@@ -80,9 +90,7 @@ def get_message_body(payload):
             elif part.get('mimeType') == 'text/html' and 'body' in part and 'data' in part['body']:
                 try:
                     html_content = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8', errors='ignore')
-                    # Simple HTML to text conversion (remove tags)
-                    import re
-                    text_content += re.sub(r'<[^>]+>', '', html_content)
+                    text_content += html_to_text(html_content)
                 except:
                     pass
             elif 'parts' in part:
@@ -92,12 +100,31 @@ def get_message_body(payload):
     if 'body' in payload and 'data' in payload['body']:
         try:
             body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8', errors='ignore')
+            if payload.get('mimeType') == 'text/html':
+                body = html_to_text(body)
         except:
             body = ""
     elif 'parts' in payload:
         body = extract_from_parts(payload['parts'])
 
     return body
+
+
+def get_attachment_names(payload):
+    """Return filenames exposed in Gmail message-part metadata."""
+    filenames = []
+
+    def collect(parts):
+        for part in parts:
+            filename = part.get('filename')
+            if filename:
+                filenames.append(filename)
+            if 'parts' in part:
+                collect(part['parts'])
+
+    if 'parts' in payload:
+        collect(payload['parts'])
+    return filenames
 
 
 def get_emails():
@@ -159,6 +186,7 @@ def get_emails():
 
             # Extract email body
             body = get_message_body(msg['payload'])
+            attachment_names = get_attachment_names(msg['payload'])
             combined_text = subject + " " + sender + " " + body
 
             # Extract and analyze URLs
@@ -167,12 +195,31 @@ def get_emails():
             
             # Check URLs with VirusTotal
             malicious_count = 0
+            malicious_urls = []
+            unscanned_urls = []
+            url_scan_errors = []
             for url in urls:
-                malicious = check_url(url)
-                malicious_count += malicious
+                try:
+                    malicious = check_url(url)
+                except VirusTotalError as exc:
+                    url_scan_errors.append({"url": url, "error": str(exc)})
+                    continue
+
+                if malicious is None:
+                    unscanned_urls.append(url)
+                elif malicious > 0:
+                    malicious_count += malicious
+                    malicious_urls.append({
+                        "url": url,
+                        "malicious_engines": malicious
+                    })
 
             # Detect phishing threats
-            detected_threats = detect_phishing(combined_text, sender, subject, urls)
+            detected_threats = detect_phishing(
+                combined_text, sender, subject, urls, attachment_names
+            )
+            if malicious_urls:
+                detected_threats["VirusTotal Malicious URL"] = malicious_urls
             threat_summary = get_threat_summary(detected_threats)
 
             # Calculate risk score
@@ -200,7 +247,14 @@ def get_emails():
                 subject,
                 risk_score,
                 " | ".join(reasons) if reasons else "No threats",
-                message_id=msg['id']
+                message_id=msg['id'],
+                status=status,
+                threat_categories=list(detected_threats),
+                suspicious_urls=suspicious_urls,
+                malicious_urls=malicious_urls,
+                unscanned_urls=unscanned_urls,
+                attachments=attachment_names,
+                url_scan_errors=url_scan_errors
             )
 
             # Format output with timestamp
@@ -218,7 +272,13 @@ def get_emails():
             print("THREAT BREAKDOWN:")
             print(f"  - Detected Threats: {len(detected_threats)}")
             print(f"  - Suspicious URLs: {len(suspicious_urls)}")
-            print(f"  - Malicious URLs (VirusTotal): {malicious_count}")
+            print(
+                f"  - Malicious URLs (VirusTotal): {len(malicious_urls)} "
+                f"(reported by {malicious_count} engines)"
+            )
+            print(f"  - URLs not found in VirusTotal: {len(unscanned_urls)}")
+            if url_scan_errors:
+                print(f"  - VirusTotal lookup errors: {len(url_scan_errors)}")
             print()
             
             if detected_threats:
@@ -230,8 +290,26 @@ def get_emails():
                 print("SUSPICIOUS URLs:")
                 for url in suspicious_urls:
                     print(f"  ⚠ {url}")
+
+            if malicious_urls:
+                print("MALICIOUS URLs (VirusTotal):")
+                for finding in malicious_urls:
+                    print(
+                        f"  ⚠ {finding['url']} "
+                        f"({finding['malicious_engines']} engines)"
+                    )
+
+            if url_scan_errors:
+                print("VirusTotal lookup errors:")
+                for error in url_scan_errors:
+                    print(f"  ! {error['error']}: {error['url']}")
             
-            if not detected_threats and not suspicious_urls and malicious_count == 0:
+            if (
+                not detected_threats
+                and not suspicious_urls
+                and not malicious_count
+                and not url_scan_errors
+            ):
                 print("No threats detected")
             
             print("=" * 50)

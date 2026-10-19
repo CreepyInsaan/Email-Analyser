@@ -41,7 +41,26 @@ def calculate_risk(
         "Evasion Techniques": 20,
         "AI-Generated": 10,
         "Deepfake": 25,
-        "Exploit Delivery": 40
+        "Exploit Delivery": 40,
+        "Phishing": 30,
+        "Spam": 10,
+        "Malware Attachments": 40,
+        "Malicious Attachments": 10,
+        "Malicious Links": 30,
+        "VirusTotal Malicious URL": 45,
+        "Email Spoofing": 25,
+        "Business Email Compromise": 35,
+        "Spear Phishing": 25,
+        "Ransomware": 45,
+        "Credential Theft": 40,
+        "Email Account Takeover": 35,
+        "Invoice and Payment Fraud": 35,
+        "Password-reset Scams": 30,
+        "Email Bombing": 25,
+        "OAuth Consent Phishing": 35,
+        "Spyware and Keyloggers": 40,
+        "Data Leakage": 30,
+        "Mailbox-rule Abuse": 35
     }
     
     # Calculate score based on detected threats

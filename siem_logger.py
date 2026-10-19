@@ -29,7 +29,14 @@ def load_logged_events():
                 "subject": subject,
                 "risk_score": entry.get("risk_score"),
                 "threat": entry.get("threat"),
-                "timestamp": entry.get("timestamp")
+                "timestamp": entry.get("timestamp"),
+                "status": entry.get("status"),
+                "threat_categories": entry.get("threat_categories", []),
+                "suspicious_urls": entry.get("suspicious_urls", []),
+                "malicious_urls": entry.get("malicious_urls", []),
+                "unscanned_urls": entry.get("unscanned_urls", []),
+                "attachments": entry.get("attachments", []),
+                "url_scan_errors": entry.get("url_scan_errors", [])
             }
 
             if entry.get("message_id"):
@@ -49,7 +56,15 @@ def log_event(
     subject,
     risk,
     threat,
-    message_id=None
+    message_id=None,
+    *,
+    status=None,
+    threat_categories=None,
+    suspicious_urls=None,
+    malicious_urls=None,
+    unscanned_urls=None,
+    attachments=None,
+    url_scan_errors=None
 ):
 
     if not os.path.exists("logs"):
@@ -60,7 +75,14 @@ def log_event(
         "sender": sender,
         "subject": subject,
         "risk_score": risk,
-        "threat": threat
+        "threat": threat,
+        "status": status,
+        "threat_categories": threat_categories or [],
+        "suspicious_urls": suspicious_urls or [],
+        "malicious_urls": malicious_urls or [],
+        "unscanned_urls": unscanned_urls or [],
+        "attachments": attachments or [],
+        "url_scan_errors": url_scan_errors or []
     }
 
     if message_id:
